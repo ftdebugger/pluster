@@ -3,22 +3,27 @@ let {resolve, dirname} = require('path');
 class Config {
 
     constructor(argv) {
-        let configPath = resolve(argv[argv.length - 1]),
-            config = require(configPath);
-
-        this.app = config.app;
-        this.workers = 2;
-        this.cwd = dirname(configPath);
-
         this.env = {};
+        this.plugins = [];
+
+        this.workers = 2;
 
         this.memoryCheckInterval = 5000;
         this.maxAllowedMemory = 500 * 1024 * 1024;
         this.killOnDisconnectTimeout = 20000;
 
-        this.plugins = [];
+        if (process.env.PLUSTER) {
+            let configPath = resolve(argv[argv.length - 1]),
+                config = require(configPath);
 
-        Object.assign(this, config);
+            this.app = config.app;
+            this.cwd = dirname(configPath);
+            this.enabled = true;
+
+            Object.assign(this, config);
+        } else {
+            this.enabled = false;
+        }
     }
 
     /**

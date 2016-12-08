@@ -13,9 +13,11 @@ class Master extends EventEmitter {
         this.workers = [];
         this.pool = [];
 
-        process.chdir(this.config.cwd);
+        if (this.config.enabled) {
+            process.chdir(this.config.cwd);
 
-        this.initPlugins();
+            this.initPlugins();
+        }
     }
 
     /**

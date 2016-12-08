@@ -85,6 +85,11 @@ class Worker extends EventEmitter {
             throw new Error('Start can be called only on slave node');
         }
 
+        // Use in not pluster
+        if (!this.config.enabled) {
+            return;
+        }
+
         this._log('start');
 
         // Start APP
