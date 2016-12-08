@@ -1,0 +1,12 @@
+{
+  "name": "pluster",
+  "version": "1.0.0",
+  "description": "Cluster for memory leaked apps",
+  "main": "index.js",
+  "scripts": {},
+  "author": "Evgeny Shpilevsky",
+  "license": "ISC",
+  "bin": {
+    "pluster": "cli.js"
+  }
+}
