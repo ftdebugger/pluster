@@ -1,5 +1,6 @@
 let cluster = require('cluster');
 let EventEmitter = require('events');
+let fs = require('fs');
 
 let {Worker} = require('./Worker');
 
@@ -29,6 +30,26 @@ class Master extends EventEmitter {
     }
 
     start() {
+        let port = this.config.env.port;
+
+        if (port && fs.existsSync(port)) {
+            fs.unlinkSync(port);
+        }
+
+        process.on('SIGTERM', () => {
+            this.terminate = true;
+
+            console.log('SIGTERM');
+
+            this.workers.forEach(worker => {
+                worker.disconnect();
+
+                setTimeout(() => worker.kill(), 5000);
+            });
+
+            setTimeout(() => process.exit(0), 5001);
+        });
+
         this.listen();
         this.startWorkers();
 
@@ -36,12 +57,13 @@ class Master extends EventEmitter {
     }
 
     listen() {
+
     }
 
     startWorkers() {
         let {workers} = this.config;
 
-        while (this.workers.length < workers) {
+        while (this.workers.length < workers && !this.terminate) {
             this.startWorker();
         }
     }

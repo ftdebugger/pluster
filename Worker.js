@@ -259,6 +259,13 @@ class Worker extends EventEmitter {
             }
         });
     }
+
+    /**
+     * Kill worker
+     */
+    kill() {
+        this._exit();
+    }
 }
 
 module.exports.Worker = Worker;
