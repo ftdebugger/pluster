@@ -9,9 +9,10 @@ let uniqueId = 0;
 
 class Worker extends EventEmitter {
 
-    constructor(config) {
+    constructor(config, master) {
         super();
 
+        this.master = master;
         this.config = config;
     }
 
@@ -69,10 +70,13 @@ class Worker extends EventEmitter {
     }
 
     _exit() {
+        this._log('clean up');
+
         this.worker.removeAllListeners();
         this.worker.kill();
         this.worker = null;
         this.started = false;
+        this._disconnecting = false;
 
         this.emit('exit');
     }
@@ -125,12 +129,21 @@ class Worker extends EventEmitter {
 
                 this.emit('rotate');
 
-                this.worker.disconnect();
+                let pid = this.worker.pid;
 
-                setTimeout(() => {
-                    this._disconnecting = false;
-                    this._exit();
-                }, this.config.killOnDisconnectTimeout);
+                // Wait until other worker disconnected
+                this.master.planDisconnect(() => {
+                    // If worker failed before correct shutdown and new was started
+                    // we don't need to disconnect
+                    if (this.worker.pid === pid) {
+                        this.worker.disconnect();
+
+                        setTimeout(() => {
+                            this._disconnecting = false;
+                            this._exit();
+                        }, this.config.killOnDisconnectTimeout);
+                    }
+                });
             }
         } else {
             this._log('send out of memory');
@@ -158,22 +171,28 @@ class Worker extends EventEmitter {
     _checkMemory() {
         let heapUsed = this._memory();
 
-        // this._log('head used [%d]', heapUsed);
-
         if (heapUsed > this.config.maxAllowedMemory) {
             this.disconnect();
         }
     }
 
+    /**
+     * Log with timestamp
+     * @param {string} message
+     * @param {*[]} args
+     * @private
+     */
     _log(message, ...args) {
+        let date = new Date().toISOString();
+
         if (cluster.isMaster) {
             if (this.worker) {
-                console.log('[master worker(%d)] ' + message, this.worker.process.pid, ...args);
+                console.log('[%s] [master worker(%d)] ' + message, date, this.worker.process.pid, ...args);
             } else {
-                console.log('[master %d] ' + message, this._memory(), ...args);
+                console.log('[%s] [master %d] ' + message, date, this._memory(), ...args);
             }
         } else {
-            console.log('[worker %d] ' + message, process.pid, ...args);
+            console.log('[%s] [worker %d] ' + message, date, process.pid, ...args);
         }
     }
 

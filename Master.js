@@ -12,6 +12,8 @@ class Master extends EventEmitter {
         this.config = config;
         this.workers = [];
         this.pool = [];
+        this.disconnectQueue = [];
+        this.disconnectProgress = false;
 
         if (this.config.enabled) {
             process.chdir(this.config.cwd);
@@ -77,6 +79,32 @@ class Master extends EventEmitter {
         worker.fork();
     }
 
+    planDisconnect(callback) {
+        this._log('plan disconnect');
+
+        this.disconnectQueue.push(callback);
+
+        if (!this.disconnectProgress) {
+            this.disconnectNext();
+        }
+    }
+
+    /**
+     * Disconnect next worker
+     */
+    disconnectNext() {
+        this._log('disconnect next');
+
+        if (this.disconnectQueue.length) {
+            this.disconnectProgress = true;
+
+            // Disconnect next worker in queue
+            this.disconnectQueue.shift()();
+        } else {
+            this.disconnectProgress = false;
+        }
+    }
+
     /**
      * @returns {Worker}
      * @private
@@ -98,13 +126,18 @@ class Master extends EventEmitter {
      * @private
      */
     _createWorker() {
-        let worker = new Worker(this.config);
+        let worker = new Worker(this.config, this);
 
         worker.on('exit', () => {
+            this._log('worker exit');
+
             // Do not fork, when it in pool
             if (this.pool.indexOf(worker) === -1) {
                 worker.fork();
             }
+
+            // If we have disconnect queue
+            this.disconnectNext();
         });
 
         worker.on('rotate', () => {
@@ -169,6 +202,22 @@ class Master extends EventEmitter {
                     });
             }
         });
+    }
+
+    /**
+     * @param {string} message
+     * @param {string[]} args
+     * @private
+     */
+    _log(message, ...args) {
+        console.log(
+            '[%s] [master] [w%d/p%d/d%d] ' + message,
+            new Date().toISOString(),
+            this.workers.length,
+            this.pool.length,
+            this.disconnectQueue.length,
+            ...args
+        );
     }
 }
 
