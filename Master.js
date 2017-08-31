@@ -1,4 +1,3 @@
-let cluster = require('cluster');
 let EventEmitter = require('events');
 let fs = require('fs');
 
@@ -80,12 +79,16 @@ class Master extends EventEmitter {
     }
 
     planDisconnect(callback) {
-        this._log('plan disconnect');
+        if (this.terminate) {
+            callback();
+        } else {
+            this._log('plan disconnect');
 
-        this.disconnectQueue.push(callback);
+            this.disconnectQueue.push(callback);
 
-        if (!this.disconnectProgress) {
-            this.disconnectNext();
+            if (!this.disconnectProgress) {
+                this.disconnectNext();
+            }
         }
     }
 
