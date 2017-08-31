@@ -8,5 +8,8 @@
   "license": "ISC",
   "bin": {
     "pluster": "cli.js"
+  },
+  "devDependencies": {
+    "express": "^4.15.4"
   }
 }

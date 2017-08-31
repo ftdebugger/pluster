@@ -10,7 +10,6 @@ class Master extends EventEmitter {
 
         this.config = config;
         this.workers = [];
-        this.pool = [];
         this.disconnectQueue = [];
         this.disconnectProgress = false;
 
@@ -33,36 +32,25 @@ class Master extends EventEmitter {
     }
 
     start() {
-        let port = this.config.env.port;
-
-        if (port && fs.existsSync(port)) {
-            fs.unlinkSync(port);
-        }
-
         process.on('SIGTERM', () => {
             this.terminate = true;
 
-            console.log('SIGTERM');
+            this._log('SIGTERM');
 
-            this.workers.forEach(worker => {
-                worker.disconnect();
+            this.workers.forEach(worker => worker.shutdown());
 
-                setTimeout(() => worker.kill(), 5000);
-            });
-
-            setTimeout(() => process.exit(0), 5001);
+            // Kill process after timeout
+            setTimeout(() => process.exit(0), this.config.killOnDisconnectTimeout + 1);
         });
 
-        this.listen();
         this.startWorkers();
 
         return this;
     }
 
-    listen() {
-
-    }
-
+    /**
+     * Start enough workers
+     */
     startWorkers() {
         let {workers} = this.config;
 
@@ -71,20 +59,29 @@ class Master extends EventEmitter {
         }
     }
 
+    /**
+     * Start single worker
+     */
     startWorker() {
-        let worker = this._getWorkerFromPool() || this._createWorker();
+        this._log('start worker');
+
+        let worker = this._createWorker();
 
         this.workers.push(worker);
+
         worker.fork();
     }
 
-    planDisconnect(callback) {
+    /**
+     * @param worker
+     */
+    planDisconnect(worker) {
         if (this.terminate) {
-            callback();
+            worker.shutdown();
         } else {
             this._log('plan disconnect');
 
-            this.disconnectQueue.push(callback);
+            this.disconnectQueue.push(worker);
 
             if (!this.disconnectProgress) {
                 this.disconnectNext();
@@ -102,25 +99,9 @@ class Master extends EventEmitter {
             this.disconnectProgress = true;
 
             // Disconnect next worker in queue
-            this.disconnectQueue.shift()();
+            this.disconnectQueue.shift().disconnect();
         } else {
             this.disconnectProgress = false;
-        }
-    }
-
-    /**
-     * @returns {Worker}
-     * @private
-     */
-    _getWorkerFromPool() {
-        for (let index = 0; index < this.pool.length; index++) {
-            let worker = this.pool[index];
-
-            if (!worker.started) {
-                this.pool = this._removeWorkerFrom(this.pool, worker);
-
-                return worker;
-            }
         }
     }
 
@@ -134,19 +115,25 @@ class Master extends EventEmitter {
         worker.on('exit', () => {
             this._log('worker exit');
 
-            // Do not fork, when it in pool
-            if (this.pool.indexOf(worker) === -1) {
-                worker.fork();
+            this._removeWorker(worker);
+
+            if (!this.terminate && !worker.rotated) {
+                this.startWorker();
             }
 
-            // If we have disconnect queue
             this.disconnectNext();
         });
 
         worker.on('rotate', () => {
-            this.pool.push(worker);
-            this._removeWorker(worker);
-            this.startWorkers();
+            this._log('worker rotate');
+
+            worker.rotated = true;
+
+            this.startWorker();
+
+            setTimeout(() => {
+                this.planDisconnect(worker);
+            }, this.config.disconnectHold);
         });
 
         worker.on('message', (data) => {
@@ -178,7 +165,9 @@ class Master extends EventEmitter {
      * @returns {*[]}
      */
     map(callback) {
-        return this.workers.map(callback);
+        return this.workers
+            .filter(this._accept, this)
+            .map(callback);
     }
 
     /**
@@ -186,7 +175,22 @@ class Master extends EventEmitter {
      * @returns {*[]}
      */
     forEach(callback) {
-        this.workers.forEach(callback);
+        this.workers
+            .filter(this._accept, this)
+            .forEach(callback);
+    }
+
+    /**
+     * Return if worker is suitable for messaging
+     * @param worker
+     * @returns {boolean}
+     */
+    _accept(worker) {
+        if (worker.isDead() || !worker.isConnected()) {
+            return false;
+        }
+
+        return worker.started && !worker.rotated;
     }
 
     /**
@@ -214,10 +218,9 @@ class Master extends EventEmitter {
      */
     _log(message, ...args) {
         console.log(
-            '[%s] [master] [w%d/p%d/d%d] ' + message,
+            '[%s] [master] [w%d/d%d] ' + message,
             new Date().toISOString(),
             this.workers.length,
-            this.pool.length,
             this.disconnectQueue.length,
             ...args
         );

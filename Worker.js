@@ -3,6 +3,7 @@ let EventEmitter = require('events');
 let {resolve} = require('path');
 
 const SIGNAL_OUT_OF_MEMORY = 'PLUSTER_SIGNAL_OUT_OF_MEMORY';
+const SIGNAL_DISCONNECT = 'PLUSTER_SIGNAL_DISCONNECT';
 const TIMEOUT = 5000;
 
 let uniqueId = 0;
@@ -16,6 +17,9 @@ class Worker extends EventEmitter {
         this.config = config;
     }
 
+    /**
+     * Start worker from master
+     */
     fork() {
         if (!cluster.isMaster) {
             throw new Error('fork must be called on master only');
@@ -34,6 +38,11 @@ class Worker extends EventEmitter {
         this._listen();
     }
 
+    /**
+     * Listen child process messages and signals
+     *
+     * @private
+     */
     _listen() {
         let onExit = () => {
             this._log('exit signal');
@@ -43,18 +52,18 @@ class Worker extends EventEmitter {
 
         let onMessage = (data) => {
             if (data && data.event === SIGNAL_OUT_OF_MEMORY) {
-                this.disconnect();
+                this.rotate();
             }
 
             this.emit('message', data);
         };
 
         let onDisconnect = () => {
+            this._log('disconnect signal');
+
             if (!this.started || this._disconnecting) {
                 return;
             }
-
-            this._log('disconnect signal');
 
             this._exit();
         };
@@ -70,15 +79,19 @@ class Worker extends EventEmitter {
     }
 
     _exit() {
-        this._log('clean up');
+        if (this.worker) {
+            this._log('clean up');
 
-        this.worker.removeAllListeners();
-        this.worker.kill();
-        this.worker = null;
-        this.started = false;
-        this._disconnecting = false;
+            this.worker.removeAllListeners();
+            this.worker.kill();
+            this.worker = null;
+            this.started = false;
+            this._disconnecting = false;
 
-        this.emit('exit');
+            this.emit('exit');
+
+            this.removeAllListeners();
+        }
     }
 
     /**
@@ -93,6 +106,11 @@ class Worker extends EventEmitter {
         if (!this.config.enabled) {
             return;
         }
+
+        this.waitSignal(SIGNAL_DISCONNECT, () => {
+            this._log('disconnect signal from master');
+            cluster.worker.disconnect();
+        });
 
         this._log('start');
 
@@ -118,40 +136,71 @@ class Worker extends EventEmitter {
     }
 
     /**
-     * Start disconnect
+     * Disconnect worker from master process
      */
     disconnect() {
-        if (cluster.isMaster) {
-            if (!this._disconnecting) {
-                this._disconnecting = true;
+        if (!cluster.isMaster) {
+            throw new Error('Try disconnect from worker process');
+        }
 
-                this._log('start disconnect');
+        if (!this._disconnecting) {
+            this._disconnecting = true;
 
-                this.emit('rotate');
+            this._log('disconnecting');
 
-                let pid = this.worker.pid;
+            // Max wait time
+            let timeout = setTimeout(() => this._exit(), this.config.killOnDisconnectTimeout);
 
-                // Wait until other worker disconnected
-                this.master.planDisconnect(() => {
-                    // If worker failed before correct shutdown and new was started
-                    // we don't need to disconnect
-                    if (this.worker.pid === pid) {
-                        this.worker.disconnect();
+            // When worker report disconnect - exit
+            //this.worker.on('disconnect', () => {
+            //    clearTimeout(timeout);
+            //
+            //    this._exit();
+            //});
 
-                        setTimeout(() => {
-                            this._disconnecting = false;
-                            this._exit();
-                        }, this.config.killOnDisconnectTimeout);
-                    }
-                });
-            }
-        } else {
-            this._log('send out of memory');
+            // When worker exit, cleanup
+            this.worker.on('exit', () => {
+                this._log('worker exit');
+                clearTimeout(timeout);
+
+                this._exit();
+            });
 
             this.send({
-                event: SIGNAL_OUT_OF_MEMORY
+                event: SIGNAL_DISCONNECT
             });
+
+            // Send signal to worker to disconnect
+            this.worker.disconnect();
         }
+    }
+
+    /**
+     * Request worker rotation
+     */
+    rotate() {
+        if (!this._rotating) {
+            this._rotating = true;
+
+            this._log('rotate request');
+
+            this.emit('rotate');
+        }
+    }
+
+    /**
+     * Graceful worker shutdown
+     */
+    shutdown() {
+        if (!cluster.isMaster) {
+            throw new Error('This is master function');
+        }
+
+        // Try disconnect as white human
+        this.disconnect();
+
+        // Kill process
+        setTimeout(() => this.kill(), this.config.killOnDisconnectTimeout);
     }
 
     /**
@@ -169,10 +218,14 @@ class Worker extends EventEmitter {
      * @private
      */
     _checkMemory() {
-        let heapUsed = this._memory();
+        let heapUsed = process.memoryUsage().heapUsed;
 
         if (heapUsed > this.config.maxAllowedMemory) {
-            this.disconnect();
+            this._log('send out of memory');
+
+            this.send({
+                event: SIGNAL_OUT_OF_MEMORY
+            });
         }
     }
 
@@ -189,15 +242,11 @@ class Worker extends EventEmitter {
             if (this.worker) {
                 console.log('[%s] [master worker(%d)] ' + message, date, this.worker.process.pid, ...args);
             } else {
-                console.log('[%s] [master %d] ' + message, date, this._memory(), ...args);
+                console.log('[%s] [master] ' + message, date, ...args);
             }
         } else {
             console.log('[%s] [worker %d] ' + message, date, process.pid, ...args);
         }
-    }
-
-    _memory() {
-        return process.memoryUsage().heapUsed;
     }
 
     /**
@@ -282,6 +331,26 @@ class Worker extends EventEmitter {
                     });
             }
         });
+    }
+
+    /**
+     * @param {string} handleEvent
+     * @param {function} callback
+     */
+    waitSignal(handleEvent, callback) {
+        let target = cluster.isMaster ?
+            this.worker :
+            process;
+
+        target.on('message', ({event, payload}) => {
+            if (event === handleEvent) {
+                callback(payload);
+            }
+        });
+    }
+
+    waitDisconnect(callback) {
+        this.waitSignal(SIGNAL_DISCONNECT, callback);
     }
 
     /**
