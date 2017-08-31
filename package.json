@@ -1,6 +1,6 @@
 {
   "name": "pluster",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Cluster for memory leaked apps",
   "main": "index.js",
   "scripts": {},
