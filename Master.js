@@ -40,7 +40,7 @@ class Master extends EventEmitter {
             this.workers.forEach(worker => worker.shutdown());
 
             // Kill process after timeout
-            setTimeout(() => process.exit(0), this.config.killOnDisconnectTimeout + 1);
+            setTimeout(() => process.exit(0), this.config.killOnSigTerm + 1);
         });
 
         this.startWorkers();

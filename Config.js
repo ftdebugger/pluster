@@ -11,6 +11,7 @@ class Config {
         this.memoryCheckInterval = 5000;
         this.maxAllowedMemory = 500 * 1024 * 1024;
         this.killOnDisconnectTimeout = 20000;
+        this.killOnSigTerm = 5000;
         this.disconnectHold = 5000;
 
         if (process.env.PLUSTER) {
