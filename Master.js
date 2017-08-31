@@ -186,7 +186,9 @@ class Master extends EventEmitter {
      * @returns {boolean}
      */
     _accept(worker) {
-        if (worker.isDead() || !worker.isConnected()) {
+        let subWorker = worker.worker;
+
+        if (!subWorker || subWorker.isDead() || !subWorker.isConnected()) {
             return false;
         }
 
