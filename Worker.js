@@ -209,7 +209,7 @@ class Worker extends EventEmitter {
      * @private
      */
     _startMemoryMonitoring() {
-        this.interval = setInterval(() => this._checkMemory(), this.config.memoryCheckInterval);
+        setTimeout(() => this._checkMemory(), this.config.memoryCheckInterval);
     }
 
     /**
@@ -221,11 +221,13 @@ class Worker extends EventEmitter {
         let heapUsed = process.memoryUsage().heapUsed;
 
         if (heapUsed > this.config.maxAllowedMemory) {
-            this._log('send out of memory');
+            this._log('send out of memory: %d / %d', heapUsed, this.config.maxAllowedMemory);
 
             this.send({
                 event: SIGNAL_OUT_OF_MEMORY
             });
+        } else {
+            this._startMemoryMonitoring();
         }
     }
 
